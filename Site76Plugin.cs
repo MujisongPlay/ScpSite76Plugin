@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -19,6 +19,7 @@ using MapEditorReborn.API.Features.Serializable;
 using Interactables.Interobjects.DoorUtils;
 using Interactables.Interobjects;
 using InventorySystem.Items.Pickups;
+using Exiled.API.Enums;
 
 namespace Site76Plugin
 {
@@ -34,6 +35,12 @@ namespace Site76Plugin
 
         public List<GameObject> PocketEscapePoints = new List<GameObject> { };
 
+        public string prevQueue;
+
+        public LeadingTeam LeadingTeam = LeadingTeam.Draw;
+
+        //public Cullable Cullable;
+
         public override void OnEnabled()
         {
             Instance = this;
@@ -44,6 +51,8 @@ namespace Site76Plugin
 
         public override void OnDisabled()
         {
+            if (prevQueue != null)
+            GameCore.ConfigFile.ServerConfig.SetString("team_respawn_queue", prevQueue);
             Instance = null;
 
             UnregisterEvents();
@@ -63,8 +72,12 @@ namespace Site76Plugin
             Exiled.Events.Handlers.Player.Joined += handler.OnPlayerJoined;
             Exiled.Events.Handlers.Player.Spawned += handler.OnSpawned;
             Exiled.Events.Handlers.Player.EscapingPocketDimension += handler.OnEscapePocket;
+            Exiled.Events.Handlers.Player.Died += handler.OnDied;
             //Exiled.Events.Handlers.Map.ExplodingGrenade += handler.Scp2176exploded;
+            Exiled.Events.Handlers.Server.EndingRound += handler.OnRoundEnd;
             Exiled.Events.Handlers.Server.RoundEnded += handler.OnRoundEnd;
+            Exiled.Events.Handlers.Player.Left += handler.OnLeft;
+            //Exiled.Events.Handlers.Player.VoiceChatting += handler.OnVoice;
         }
 
         public void UnregisterEvents()
@@ -75,25 +88,28 @@ namespace Site76Plugin
             Exiled.Events.Handlers.Player.EscapingPocketDimension -= handler.OnEscapePocket;
             //Exiled.Events.Handlers.Map.ExplodingGrenade -= handler.Scp2176exploded;
             MapEditorReborn.Events.Handlers.Schematic.SchematicSpawned -= handler.OnSchematicSpawned;
+            Exiled.Events.Handlers.Player.Died -= handler.OnDied;
+            Exiled.Events.Handlers.Player.Left -= handler.OnLeft;
+            Exiled.Events.Handlers.Server.EndingRound -= handler.OnRoundEnd;
             Exiled.Events.Handlers.Server.RoundEnded -= handler.OnRoundEnd;
+            //Exiled.Events.Handlers.Player.VoiceChatting -= handler.OnVoice;
         }
     }
 
     public class EventHandler
     {
-        string prevQueue;
 
         public void OnSchematicSpawned(MapEditorReborn.Events.EventArgs.SchematicSpawnedEventArgs ev)
         {
             if (ev.Name.Equals("Site76", StringComparison.InvariantCultureIgnoreCase))
             {
                 ServerConsole.AddLog("Site-76 detected. Activating Plugin...");
+                //GameObject.FindObjectsOfType<MapGeneration.Distributors.Scp079Generator>().ForEach(x => UnityEngine.Object.Destroy(x));
                 Site76Plugin.Instance.ReGisterEvents();
                 Site76Plugin.Instance.schematicObject = ev.Schematic.gameObject;
                 ChildRegister(ev.Schematic.gameObject);
                 ev.Schematic.gameObject.AddComponent<Components.MinimapElement>().IsController = true;
-                //GameObject.FindObjectsOfType<MapGeneration.Distributors.Scp079Generator>().ForEach(x => UnityEngine.Object.Destroy(x));
-                prevQueue = GameCore.ConfigFile.ServerConfig.GetString("team_respawn_queue");
+                Site76Plugin.Instance.prevQueue = GameCore.ConfigFile.ServerConfig.GetString("team_respawn_queue");
                 GameCore.ConfigFile.ServerConfig.SetString("team_respawn_queue", Site76Plugin.Instance.Config.CustomSpawnQueue);
             }
         }
@@ -105,6 +121,19 @@ namespace Site76Plugin
             primitive.Color = Color.red;
         }
 
+        public void OnVoice(VoiceChattingEventArgs ev)
+        {
+            if (!ev.IsAllowed) return;
+            if (new Bounds(Site76Plugin.Instance.schematicObject.transform.position + new Vector3(7.219f, 7.859f, -1.266f), new Vector3(6.038452f, 2.973262f, 4.97298f)).Contains(ev.Player.Position))
+            {
+                ev.VoiceMessage.Channel.SetFlag(VoiceChat.VoiceChatChannel.Intercom, true);
+            }
+            else
+            {
+                ev.VoiceMessage.Channel.SetFlag(VoiceChat.VoiceChatChannel.Intercom, false);
+            }
+        }
+
         public void Scp2176exploded(Exiled.Events.EventArgs.Map.ExplodingGrenadeEventArgs ev)
         {
             if (ev.Projectile.Type == ItemType.SCP2176)
@@ -114,7 +143,7 @@ namespace Site76Plugin
             }
         }
 
-        public void OnSpawned(Exiled.Events.EventArgs.Player.SpawnedEventArgs ev)
+        public void OnSpawned(SpawnedEventArgs ev)
         {
             if (API.CurrentLoadedMap == null)
             {
@@ -122,7 +151,7 @@ namespace Site76Plugin
             }
             if (ev.Player.RoleManager.CurrentRole.Team == Team.SCPs && ev.Player.RoleManager.CurrentRole.RoleTypeId != RoleTypeId.Scp0492)
             {
-                ev.Player.MaxHealth = ev.Player.MaxHealth * Mathf.Pow(ReferenceHub.AllHubs.Count - 1, 0.35f);
+                ev.Player.MaxHealth = ev.Player.MaxHealth * Mathf.Pow(ReferenceHub.AllHubs.Count - 1, Site76Plugin.Instance.Config.ScpMaxHealthPowValuePerPerson);
                 ev.Player.Heal(ev.Player.MaxHealth, false);
             }
             List<PlayerSpawnPointSerializable> list = API.CurrentLoadedMap.PlayerSpawnPoints.FindAll(x => keyValuePairs.TryGetValue(ev.Player.RoleManager.CurrentRole.RoleTypeId, out SpawnableTeam team) ? x.SpawnableTeam == team : false);
@@ -131,7 +160,27 @@ namespace Site76Plugin
                 PlayerSpawnPointSerializable serializable = list.RandomItem();
                 ev.Player.Teleport(API.GetRelativePosition(serializable.Position, API.GetRandomRoom(serializable.RoomType)));
             }
-            
+        }
+
+        public void OnDied(DiedEventArgs ev)
+        {
+            switch (ev.TargetOldRole)
+            {
+                case RoleTypeId.Scp173:
+                case RoleTypeId.Scp049:
+                case RoleTypeId.Scp096:
+                case RoleTypeId.Scp106:
+                case RoleTypeId.Scp939:
+                case RoleTypeId.Scp0492:
+                    if (RoundSummary.singleton.CountTeam(Team.SCPs) > 0 || !(ev.DamageHandler.Base is PlayerStatsSystem.AttackerDamageHandler))
+                    {
+                        return;
+                    }
+                    Site76Plugin.Instance.LeadingTeam = ev.Attacker.LeadingTeam;
+                    break;
+                default:
+                    break;
+            }
         }
 
         public static Dictionary<RoleTypeId, SpawnableTeam> keyValuePairs = new Dictionary<RoleTypeId, SpawnableTeam>
@@ -170,7 +219,7 @@ namespace Site76Plugin
                     if (game.TryGetComponent(out PrimitiveObject primitive))
                     {
                         Color color = primitive.Primitive.Color;
-                        color *= 5f;
+                        color *= Site76Plugin.Instance.Config.ConsoleLetterReflectionAmount;
                         color.a = 0.99f;
                         primitive.Primitive.Color = color;
                     }
@@ -180,7 +229,7 @@ namespace Site76Plugin
                     if (game.TryGetComponent(out PrimitiveObject primitive))
                     {
                         Color color = primitive.Primitive.Color;
-                        color *= 5f;
+                        color *= Site76Plugin.Instance.Config.MinimapElementReflectionAmount;
                         color.a = 0.99f;
                         primitive.Primitive.Color = color;
                     }
@@ -190,7 +239,17 @@ namespace Site76Plugin
                     if (game.TryGetComponent(out PrimitiveObject primitive) && primitive.Primitive.Type == PrimitiveType.Cube)
                     {
                         Color color = primitive.Primitive.Color;
-                        color *= 500f;
+                        color *= Site76Plugin.Instance.Config.NormalLightReflectionAmount;
+                        color.a = 0.99f;
+                        primitive.Primitive.Color = color;
+                    }
+                }
+                else if (transform.gameObject.name == "Transparent")
+                {
+                    if (game.TryGetComponent(out PrimitiveObject primitive))
+                    {
+                        Color color = primitive.Primitive.Color;
+                        color *= Site76Plugin.Instance.Config.HighBeamReflectionAmount;
                         color.a = 0.99f;
                         primitive.Primitive.Color = color;
                     }
@@ -291,7 +350,7 @@ namespace Site76Plugin
                 gameObject.transform.position = transform1.position; gameObject.transform.rotation = transform1.rotation;
                 if (gameObject.TryGetComponent(out DoorVariant door))
                 {
-                    door.RequiredPermissions.RequiredPermissions = (KeycardPermissions)ushort.Parse(transform1.gameObject.name.Remove(0, 2));
+                    door.RequiredPermissions.RequiredPermissions = (Interactables.Interobjects.DoorUtils.KeycardPermissions)ushort.Parse(transform1.gameObject.name.Remove(0, 2));
                 }
                 NetworkServer.Spawn(gameObject);
             }
@@ -339,17 +398,90 @@ namespace Site76Plugin
             }
         }
 
-        public void OnRoundEnd(Exiled.Events.EventArgs.Server.RoundEndedEventArgs ev)
+        public void OnRoundEnd(Exiled.Events.EventArgs.Server.EndingRoundEventArgs ev)
         {
-            GameCore.ConfigFile.ServerConfig.SetString("team_respawn_queue", prevQueue);
+            if (Round.ElapsedTime.TotalSeconds <= 300f)
+            {
+                return;
+            }
+            if (Site76Plugin.Instance.LeadingTeam != LeadingTeam.Draw)
+            {
+                ev.LeadingTeam = Site76Plugin.Instance.LeadingTeam;
+                ev.IsRoundEnded = true;
+                Site76Plugin.Instance.LeadingTeam = LeadingTeam.Draw;
+                return;
+            }
+            bool flag = ev.ClassList.mtf_and_guards + ev.ClassList.scientists != 0;
+            bool flag1 = ev.ClassList.chaos_insurgents + ev.ClassList.class_ds != 0;
+            if (flag^flag1)
+            {
+                if (flag && ev.ClassList.scientists >= RoundSummary.singleton.classlistStart.scientists / 3f)
+                {
+                    ev.LeadingTeam = LeadingTeam.FacilityForces;
+                    ev.IsRoundEnded = true;
+                }
+                else if (flag1 && ev.ClassList.class_ds >= RoundSummary.singleton.classlistStart.class_ds / 3f)
+                {
+                    ev.LeadingTeam = LeadingTeam.ChaosInsurgency;
+                    ev.IsRoundEnded = true;
+                }
+                else
+                {
+                    ev.IsRoundEnded = false;
+                }
+            }
+            else if (!(flag|flag1))
+            {
+                ev.LeadingTeam = ev.ClassList.zombies + ev.ClassList.scps_except_zombies > 0 ? LeadingTeam.Anomalies : LeadingTeam.Draw;
+                ev.IsRoundEnded = true;
+            }
         }
 
-        public void OnEscapePocket(Exiled.Events.EventArgs.Player.EscapingPocketDimensionEventArgs ev)
+        public void OnRoundEnd(Exiled.Events.EventArgs.Server.RoundEndedEventArgs ev)
+        {
+            GameCore.ConfigFile.ServerConfig.SetString("team_respawn_queue", Site76Plugin.Instance.prevQueue);
+        }
+
+        public void OnEscapePocket(EscapingPocketDimensionEventArgs ev)
         {
             if (Site76Plugin.Instance.PocketEscapePoints.Count != 0)
             {
                 ev.TeleportPosition = Site76Plugin.Instance.PocketEscapePoints.RandomItem().transform.position;
             }
         }
+
+        public void OnLeft(LeftEventArgs ev)
+        {
+            Components.MinimapElement element = Components.MinimapElement.minimapElements.Find(x => x.owner == ev.Player.ReferenceHub);
+            if (element != null)
+            {
+                Components.MinimapElement.minimapElements.Remove(element);
+                GameObject.Destroy(element.gameObject, 0.5f);
+            }
+        }
     }
+
+    //public class Cullable : MonoBehaviour
+    //{
+    //    void Start()
+    //    {
+    //        bounds.center += this.transform.position;
+    //    }
+
+    //    void Update()
+    //    {
+    //        if (Player.List.Any(x => x.Role.IsAlive && bounds.Contains(x.Position)))
+    //        {
+    //            active = false;
+    //        }
+    //        else
+    //        {
+    //            active = true;
+    //        }
+    //    }
+
+    //    public bool active = true;
+
+    //    Bounds bounds = new Bounds(new Vector3(-8.943f, 8.638f, 0.376f), new Vector3(29.60682f, 4.927691f, 15.53502f));
+    //}
 }
