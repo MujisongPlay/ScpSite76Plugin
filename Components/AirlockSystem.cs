@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -33,6 +33,8 @@ namespace Site76Plugin
                 light1.Color = MapEditorObject.GetColorFromString(light.Base.Color);
                 light.Destroy();
             }
+            PrimitiveObject = this.transform.GetChild(3).GetChild(0).GetComponent<PrimitiveObject>();
+            Color = PrimitiveObject.Primitive.Color;
         }
 
         void Update()
@@ -69,6 +71,7 @@ namespace Site76Plugin
                     }
                 }
                 Activated = false;
+                PrimitiveObject.Primitive.Color = Color;
                 CooldownTimer = Site76Plugin.Instance.Config.AirlockReworkingCoolTime;
             }
             else if (flag)
@@ -85,6 +88,10 @@ namespace Site76Plugin
                     }
                 }
                 Activated = true;
+                Color color = Color;
+                color *= 5;
+                color.a = 0.99f;
+                PrimitiveObject.Primitive.Color = color;
                 CooldownTimer = Site76Plugin.Instance.Config.AirlockCloseTime;
             }
         }
@@ -102,5 +109,9 @@ namespace Site76Plugin
         readonly List<Animator> animators = new List<Animator> { };
 
         public List<ReferenceHub> playersInRoom;
+
+        PrimitiveObject PrimitiveObject;
+
+        Color Color;
     }
 }
